@@ -1,0 +1,930 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © LonesomeTheBlue
+
+//@version=4
+study("Divergence for Many Indicators v4", overlay = true, max_bars_back = 1000, max_lines_count = 400, max_labels_count = 400)
+prd = input(defval = 5, title = "Pivot Period", minval = 1, maxval = 50)
+source = input(defval = "Close", title = "Source for Pivot Points", options = ["Close", "High/Low"])
+searchdiv = input(defval = "Regular", title = "Divergence Type", options = ["Regular", "Hidden", "Regular/Hidden"])
+showindis = input(defval = "Full", title = "Show Indicator Names", options = ["Full", "First Letter", "Don't Show"])
+showlimit = input(1, title="Minimum Number of Divergence", minval = 1, maxval = 11)
+maxpp = input(defval = 10, title = "Maximum Pivot Points to Check", minval = 1, maxval = 20)
+maxbars = input(defval = 100, title = "Maximum Bars to Check", minval = 30, maxval = 200)
+shownum = input(defval = true, title = "Show Divergence Number")
+showlast = input(defval = false, title = "Show Only Last Divergence")
+dontconfirm = input(defval = false, title = "Don't Wait for Confirmation")
+showlines = input(defval = true, title = "Show Divergence Lines")
+showpivot = input(defval = false, title = "Show Pivot Points")
+calcmacd = input(defval = true, title = "MACD")
+calcmacda = input(defval = true, title = "MACD Histogram")
+calcrsi = input(defval = true, title = "RSI")
+calcstoc = input(defval = true, title = "Stochastic")
+calccci = input(defval = true, title = "CCI")
+calcmom = input(defval = false, title = "Momentum")
+calcobv = input(defval = true, title = "OBV")
+calcvwmacd = input(true, title = "VWmacd")
+calccmf = input(true, title = "Chaikin Money Flow")
+calcmfi = input(true, title = "Money Flow Index")
+calcext = input(false, title = "Check External Indicator")
+externalindi = input(defval = close, title = "External Indicator")
+pos_reg_div_col = input(defval = color.yellow, title = "Positive Regular Divergence")
+neg_reg_div_col = input(defval = color.navy, title = "Negative Regular Divergence")
+pos_hid_div_col = input(defval = color.lime, title = "Positive Hidden Divergence")
+neg_hid_div_col = input(defval = color.red, title = "Negative Hidden Divergence")
+pos_div_text_col = input(defval = color.black, title = "Positive Divergence Text Color")
+neg_div_text_col = input(defval = color.white, title = "Negative Divergence Text Color")
+reg_div_l_style_ = input(defval = "Solid", title = "Regular Divergence Line Style", options = ["Solid", "Dashed", "Dotted"])
+hid_div_l_style_ = input(defval = "Dashed", title = "Hdden Divergence Line Style", options = ["Solid", "Dashed", "Dotted"])
+reg_div_l_width = input(defval = 2, title = "Regular Divergence Line Width", minval = 1, maxval = 5)
+hid_div_l_width = input(defval = 1, title = "Hidden Divergence Line Width", minval = 1, maxval = 5)
+
+// set line styles
+var reg_div_l_style = reg_div_l_style_ == "Solid" ? line.style_solid : 
+                       reg_div_l_style_ == "Dashed" ? line.style_dashed :
+                       line.style_dotted
+var hid_div_l_style = hid_div_l_style_ == "Solid" ? line.style_solid : 
+                       hid_div_l_style_ == "Dashed" ? line.style_dashed :
+                       line.style_dotted
+
+
+// get indicators
+rsi = rsi(close, 14) // RSI
+[macd, signal, deltamacd] = macd(close, 12, 26, 9) // MACD
+moment = mom(close, 10) // Momentum
+cci = cci(close, 10) // CCI
+Obv = obv // OBV
+stk = sma(stoch(close, high, low, 14), 3) // Stoch
+maFast = vwma(close, 12), maSlow = vwma(close, 26), vwmacd = maFast - maSlow // volume weighted macd
+Cmfm = ((close-low) - (high-close)) / (high - low), Cmfv = Cmfm * volume, cmf = sma(Cmfv, 21) / sma(volume,21) // Chaikin money flow
+Mfi = mfi(close, 14) // Moneyt Flow Index
+
+// keep indicators names and colors in arrays
+var indicators_name = array.new_string(11)
+var div_colors = array.new_color(4)
+if barstate.isfirst
+    // names
+    array.set(indicators_name, 0, showindis == "Full" ? "MACD" : "M")
+    array.set(indicators_name, 1, showindis == "Full" ? "Hist" : "H")
+    array.set(indicators_name, 2, showindis == "Full" ? "RSI" : "E")
+    array.set(indicators_name, 3, showindis == "Full" ? "Stoch" : "S")
+    array.set(indicators_name, 4, showindis == "Full" ? "CCI" : "C")
+    array.set(indicators_name, 5, showindis == "Full" ? "MOM" : "M")
+    array.set(indicators_name, 6, showindis == "Full" ? "OBV" : "O")
+    array.set(indicators_name, 7, showindis == "Full" ? "VWMACD" : "V")
+    array.set(indicators_name, 8, showindis == "Full" ? "CMF" : "C")
+    array.set(indicators_name, 9, showindis == "Full" ? "MFI" : "M")
+    array.set(indicators_name,10, showindis == "Full" ? "Extrn" : "X")
+    //colors
+    array.set(div_colors, 0, pos_reg_div_col)
+    array.set(div_colors, 1, neg_reg_div_col)
+    array.set(div_colors, 2, pos_hid_div_col)
+    array.set(div_colors, 3, neg_hid_div_col)
+
+// Check if we get new Pivot High Or Pivot Low
+float ph = pivothigh((source == "Close" ? close : high), prd, prd)
+float pl = pivotlow((source == "Close" ? close : low), prd, prd)
+plotshape(ph and showpivot, text = "H",  style = shape.labeldown, color = color.new(color.white, 100), textcolor = color.red, location = location.abovebar, transp = 0, offset = -prd)
+plotshape(pl and showpivot, text = "L",  style = shape.labelup, color = color.new(color.white, 100), textcolor = color.lime, location = location.belowbar, transp = 0, offset = -prd)
+
+// keep values and positions of Pivot Highs/Lows in the arrays
+var int maxarraysize = 20
+var ph_positions = array.new_int(maxarraysize, 0)
+var pl_positions = array.new_int(maxarraysize, 0)
+var ph_vals = array.new_float(maxarraysize, 0.)
+var pl_vals = array.new_float(maxarraysize, 0.)
+
+// add PHs to the array
+if ph
+    array.unshift(ph_positions, bar_index)
+    array.unshift(ph_vals, ph)
+    if array.size(ph_positions) > maxarraysize
+        array.pop(ph_positions)
+        array.pop(ph_vals)
+
+// add PLs to the array
+if pl
+    array.unshift(pl_positions, bar_index)
+    array.unshift(pl_vals, pl)
+    if array.size(pl_positions) > maxarraysize
+        array.pop(pl_positions)
+        array.pop(pl_vals)
+
+// functions to check Regular Divergences and Hidden Divergences
+
+// function to check positive regular or negative hidden divergence
+// cond == 1 => positive_regular, cond == 2=> negative_hidden
+positive_regular_positive_hidden_divergence(src, cond)=>
+    divlen = 0
+    prsc = source == "Close" ? close : low
+    // if indicators higher than last value and close price is higher than las close 
+    if dontconfirm or src > src[1] or close > close[1]
+        startpoint = dontconfirm ? 0 : 1 // don't check last candle
+        // we search last 15 PPs
+        for x = 0 to maxpp - 1
+            len = bar_index - array.get(pl_positions, x) + prd
+            // if we reach non valued array element or arrived 101. or previous bars then we don't search more
+            if array.get(pl_positions, x) == 0 or len > maxbars
+                break
+            if len > 5 and 
+               ((cond == 1 and src[startpoint] > src[len] and prsc[startpoint] < nz(array.get(pl_vals, x))) or
+               (cond == 2 and src[startpoint] < src[len] and prsc[startpoint] > nz(array.get(pl_vals, x))))
+                slope1 = (src[startpoint] - src[len]) / (len - startpoint)
+                virtual_line1 = src[startpoint] - slope1
+                slope2 = (close[startpoint] - close[len]) / (len - startpoint)
+                virtual_line2 = close[startpoint] - slope2
+                arrived = true
+                for y = 1 + startpoint to len - 1
+                    if src[y] < virtual_line1 or nz(close[y]) < virtual_line2
+                        arrived := false
+                        break
+                    virtual_line1 := virtual_line1 - slope1
+                    virtual_line2 := virtual_line2 - slope2
+                
+                if arrived
+                    divlen := len
+                    break
+    divlen
+
+// function to check negative regular or positive hidden divergence
+// cond == 1 => negative_regular, cond == 2=> positive_hidden
+negative_regular_negative_hidden_divergence(src, cond)=>
+    divlen = 0
+    prsc = source == "Close" ? close : high
+    // if indicators higher than last value and close price is higher than las close 
+    if dontconfirm or src < src[1] or close < close[1]
+        startpoint = dontconfirm ? 0 : 1 // don't check last candle
+        // we search last 15 PPs
+        for x = 0 to maxpp - 1
+            len = bar_index - array.get(ph_positions, x) + prd
+            // if we reach non valued array element or arrived 101. or previous bars then we don't search more
+            if array.get(ph_positions, x) == 0 or len > maxbars
+                break
+            if len > 5 and 
+               ((cond == 1 and src[startpoint] < src[len] and prsc[startpoint] > nz(array.get(ph_vals, x))) or 
+               (cond == 2 and src[startpoint] > src[len] and prsc[startpoint] < nz(array.get(ph_vals, x))))
+                slope1 = (src[startpoint] - src[len]) / (len - startpoint)
+                virtual_line1 = src[startpoint] - slope1
+                slope2 = (close[startpoint] - nz(close[len])) / (len - startpoint)
+                virtual_line2 = close[startpoint] - slope2
+                arrived = true
+                for y = 1 + startpoint to len - 1
+                    if src[y] > virtual_line1 or nz(close[y]) > virtual_line2
+                        arrived := false
+                        break
+                    virtual_line1 := virtual_line1 - slope1
+                    virtual_line2 := virtual_line2 - slope2
+                
+                if arrived
+                    divlen := len
+                    break
+    divlen
+
+// calculate 4 types of divergence if enabled in the options and return divergences in an array
+calculate_divs(cond, indicator)=>
+    divs = array.new_int(4, 0)
+    array.set(divs, 0, cond and (searchdiv == "Regular" or searchdiv == "Regular/Hidden") ? positive_regular_positive_hidden_divergence(indicator, 1) : 0)
+    array.set(divs, 1, cond and (searchdiv == "Regular" or searchdiv == "Regular/Hidden") ? negative_regular_negative_hidden_divergence(indicator, 1) : 0)
+    array.set(divs, 2, cond and (searchdiv == "Hidden" or searchdiv == "Regular/Hidden")  ? positive_regular_positive_hidden_divergence(indicator, 2) : 0)
+    array.set(divs, 3, cond and (searchdiv == "Hidden" or searchdiv == "Regular/Hidden")  ? negative_regular_negative_hidden_divergence(indicator, 2) : 0)
+    divs
+
+// array to keep all divergences
+var all_divergences = array.new_int(44) // 11 indicators * 4 divergence = 44 elements
+// set related array elements
+array_set_divs(div_pointer, index)=>
+    for x = 0 to 3
+        array.set(all_divergences, index * 4 + x, array.get(div_pointer, x))
+
+// set divergences array 
+array_set_divs(calculate_divs(calcmacd, macd), 0)
+array_set_divs(calculate_divs(calcmacda, deltamacd), 1)
+array_set_divs(calculate_divs(calcrsi, rsi), 2)
+array_set_divs(calculate_divs(calcstoc, stk), 3)
+array_set_divs(calculate_divs(calccci, cci), 4)
+array_set_divs(calculate_divs(calcmom, moment), 5)
+array_set_divs(calculate_divs(calcobv, Obv), 6)
+array_set_divs(calculate_divs(calcvwmacd, vwmacd), 7)
+array_set_divs(calculate_divs(calccmf, cmf), 8)
+array_set_divs(calculate_divs(calcmfi, Mfi), 9)
+array_set_divs(calculate_divs(calcext, externalindi), 10)
+
+// check minimum number of divergence, if less than showlimit then delete all divergence
+total_div = 0
+for x = 0 to array.size(all_divergences) - 1
+    total_div := total_div + round(sign(array.get(all_divergences, x)))
+
+if total_div < showlimit
+    array.fill(all_divergences, 0)
+
+// keep line in an array
+var pos_div_lines = array.new_line(0)
+var neg_div_lines = array.new_line(0)
+var pos_div_labels = array.new_label(0)
+var neg_div_labels = array.new_label(0) 
+
+// MLP 구현부 삽입, 입력값
+isMLP = input(true, title="단순 신경망 학습", group="학습")
+
+var inode = 48  //다이버전스 개수 11 indicators * 4 divergence = 44 elements  에다 마지막에 가격기반을 두 개 추가해서 46개
+var hnode = input(500, title="은닉층 노드 수", group="학습", tooltip="노드수 많으면 많을수록 좋지만 성능이 점점 수렴하고 계산이 느려짐")
+var onode = 12 // 5미만 가격차이 1마다 2% 5초과 1마다 2%로 지정.
+var lrate = input(0.1, "학습률", group="학습", minval=0.0001, maxval=0.5, step=0.01, tooltip="이번 신호에서 학습할 때 발생하는 오차에 얼마나 가중치를 적합시킬지를 정함")
+var train_candle = input(14, "몇 캔들 전과의 가격차이로 학습하는 기준", minval=0, maxval=200, group="학습", tooltip="과거 종가 가격 차이, 고가 차이, 저가 차이 % 데이터들을 입력층 노드의 일부로 넣을건데 몇 캔들이나 과거로 넣을지 정하는거")
+var std_candle = input(7, "몇 캔들 뒤를 예측?", minval=1, maxval=200, group="학습", tooltip="말그대로 신호 위치에서 몇 캔들이나 미래를 예측할지 정함. 학습 오차에 영향이 깊음")
+var trainCnt = input(1, "중복학습 횟수", group="학습", tooltip="교차 학습을 구현 못해서 안쓰는게 나음.")
+var isShowTrainLog = input(false, "학습 로그 표시", group="학습", tooltip="체크하면 학습된 위치 보여줌")
+var isSecMaxView = input(true, "2번째로 큰 예상 강도도 표시", group="학습")
+var signal_check = input(10, "신호 사라짐 확인 캔들 수", tooltip ="10이면 현재에서 10캔들 이전까지만 신호가 사라지지 않았는지 확인하고 학습한다는 뜻. 큰 시간대일수록 작은 수치 사용 추천", group="학습")
+var diff_per = input(5.5, "변동 폭 최대 단위 -값% ~ +값% 를 총 12토막냄.", minval=5.5, maxval=99, step=5.5, tooltip ="예시) 5.5입력시-5.5% ~ +5.5% 단위까지 제대로 학습함.\n 큰 시간대에선 변동폭이 커지므로 제대로 학습할 수 있게 넣은 단위. 5.5%~99%까지 지원", group="학습")
+var diff_val = diff_per / 5.5
+// var is_success_check = input(false, "적중률 테이블 보기")
+// var success_check_cnt = input(100, "범위 내 적중률 계산 개수", minval=10, maxval=1000, tooltip="최근 범위 내에서 얼마나 잘 맞았는지 테이블로 보기 위한 변수")
+// var success_check_option = input("기간내 범위 달성", "정답 기준", options=["기간 마무리에 범위 달성", "기간내 범위 달성"])
+// var sucess_option_flag = success_check_option == "기간내 범위 달성" ? true : false
+// var success_cnt_option = input("#1", "예상강도별 적중률 체크", options=["#1", "#2", "#1+#2"])
+
+
+var ml_learn_pos_div = array.new_string(0) 
+var ml_past_pos_price = array.new_float(0) 
+var ml_past_pos_high_price = array.new_float(0) 
+var ml_past_pos_low_price = array.new_float(0) 
+var ml_past_pos_mid_price = array.new_float(0) 
+var add_after_pos_cnt = array.new_int(0) 
+
+var ml_learn_neg_div = array.new_string(0) 
+var ml_past_neg_price = array.new_float(0)
+var ml_past_neg_high_price = array.new_float(0) 
+var ml_past_neg_low_price = array.new_float(0) 
+var ml_past_neg_mid_price = array.new_float(0)
+var add_after_neg_cnt = array.new_int(0) 
+
+
+get_input_node_datas() =>
+    calc_per = 50.0/diff_per
+    input_price_per = (close/close[train_candle]-1) * calc_per + 0.5
+    if(input_price_per < 0.01) 
+	    input_price_per := 0.01
+    if(input_price_per > 0.99) 
+    	input_price_per := 0.99
+    if(na(input_price_per))
+    	input_price_per := 0.5
+    hl_high_price_per = (close/highest(train_candle)-1) * calc_per + 0.5
+    if(hl_high_price_per < 0.01) 
+    	hl_high_price_per := 0.01
+    if(hl_high_price_per > 0.99) 
+    	hl_high_price_per := 0.99
+    if(na(hl_high_price_per))
+    	hl_high_price_per := 0.5
+    hl_low_price_per = (close/lowest(train_candle)-1) * calc_per + 0.5
+    if(hl_low_price_per < 0.01) 
+    	hl_low_price_per := 0.01
+    if(hl_low_price_per > 0.99) 
+    	hl_low_price_per := 0.99
+    if(na(hl_low_price_per))
+    	hl_low_price_per := 0.5
+    hl_mid_price_per = (close/avg(highest(train_candle), lowest(train_candle))-1) * calc_per + 0.5
+    if(hl_mid_price_per < 0.01) 
+    	hl_mid_price_per := 0.01
+    if(hl_mid_price_per > 0.99) 
+    	hl_mid_price_per := 0.99
+    if(na(hl_mid_price_per))
+    	hl_mid_price_per := 0.5
+    [input_price_per, hl_high_price_per, hl_low_price_per, hl_mid_price_per]
+
+push_pos_ml_datas(text) =>
+    array.push(ml_learn_pos_div, text)
+    [input_price_per, hl_high_price_per, hl_low_price_per, hl_mid_price_per] = get_input_node_datas()
+    array.push(ml_past_pos_price, input_price_per)
+    array.push(ml_past_pos_high_price, hl_high_price_per)
+    array.push(ml_past_pos_low_price, hl_low_price_per)
+    array.push(ml_past_pos_mid_price, hl_mid_price_per)
+    array.push(add_after_pos_cnt, 0)
+    
+push_neg_ml_datas(text) =>
+    array.push(ml_learn_neg_div, text)
+    [input_price_per, hl_high_price_per, hl_low_price_per, hl_mid_price_per] = get_input_node_datas()
+    array.push(ml_past_neg_price, input_price_per)
+    array.push(ml_past_neg_high_price, hl_high_price_per)
+    array.push(ml_past_neg_low_price, hl_low_price_per)
+    array.push(ml_past_neg_mid_price, hl_mid_price_per)
+    array.push(add_after_neg_cnt, 0)
+
+pop_pos_ml_datas() =>
+    array.pop(add_after_pos_cnt)
+    [array.pop(ml_learn_pos_div), array.pop(ml_past_pos_price), array.pop(ml_past_pos_high_price), array.pop(ml_past_pos_low_price), array.pop(ml_past_pos_mid_price)]
+    
+pop_neg_ml_datas() =>
+    array.pop(add_after_neg_cnt)
+    [array.pop(ml_learn_neg_div), array.pop(ml_past_neg_price), array.pop(ml_past_neg_high_price), array.pop(ml_past_neg_low_price), array.pop(ml_past_neg_mid_price)]
+    
+shift_pos_ml_datas() =>
+    array.shift(add_after_pos_cnt)
+    [array.shift(ml_learn_pos_div), array.shift(ml_past_pos_price), array.shift(ml_past_pos_high_price), array.shift(ml_past_pos_low_price), array.shift(ml_past_pos_mid_price)]
+    
+shift_neg_ml_datas() =>
+    array.shift(add_after_neg_cnt)
+    [array.shift(ml_learn_neg_div), array.shift(ml_past_neg_price), array.shift(ml_past_neg_high_price), array.shift(ml_past_neg_low_price), array.shift(ml_past_neg_mid_price)]
+    
+clear_pos_ml_datas() =>
+    array.clear(add_after_pos_cnt)
+    array.clear(ml_learn_pos_div)
+    array.clear(ml_past_pos_price)
+    array.clear(ml_past_pos_high_price)
+    array.clear(ml_past_pos_low_price)
+    array.clear(ml_past_pos_mid_price)
+    
+clear_neg_ml_datas() =>
+    array.clear(add_after_neg_cnt)
+    array.clear(ml_learn_neg_div)
+    array.clear(ml_past_neg_price)
+    array.clear(ml_past_neg_high_price)
+    array.clear(ml_past_neg_low_price)
+    array.clear(ml_past_neg_mid_price)
+
+
+up_pos_cnt() =>
+    if(array.size(add_after_pos_cnt) > 0)
+        for i = 0 to array.size(add_after_pos_cnt) - 1
+            array.set(add_after_pos_cnt, i, array.get(add_after_pos_cnt,i)+1)
+        
+up_neg_cnt() =>
+    if(array.size(add_after_neg_cnt) > 0)
+        for i = 0 to array.size(add_after_neg_cnt) - 1
+            array.set(add_after_neg_cnt, i, array.get(add_after_neg_cnt,i)+1)
+
+over_cnt_pos_check(cnt) =>
+    if(array.size(add_after_pos_cnt)!=0)
+        if array.get(add_after_pos_cnt, 0) > cnt
+            [a, b, c, d, e] = shift_pos_ml_datas()
+            [a, b, c, d, e]
+        else
+            ["", -1.0, -1.0, -1.0, -1.0]
+            
+over_cnt_neg_check(cnt) =>
+    if(array.size(add_after_neg_cnt)!=0)
+        if array.get(add_after_neg_cnt, 0) > cnt
+            [a, b, c, d, e] = shift_neg_ml_datas()
+            [a, b, c, d, e]
+        else
+            ["", -1.0, -1.0, -1.0, -1.0]
+
+get_target_datas() =>
+    train_std_close = std_candle < signal_check ? signal_check-std_candle : 0
+    target = ((close[train_std_close] / close[train_std_close + std_candle]-1)*1000 + diff_val*55.0) / (10*diff_val) 
+    if(target < 5.5) 
+        target := floor(target)
+    else
+        target := ceil(target)
+    if(target < 0) 
+        target := 0
+    if(target > 11) 
+        target := 11
+    target
+
+// remove old lines and labels if showlast option is enabled
+delete_old_pos_div_lines()=>
+    if array.size(pos_div_lines) > 0    
+        for j = 0 to array.size(pos_div_lines) - 1 
+            line.delete(array.get(pos_div_lines, j))
+        array.clear(pos_div_lines)
+
+delete_old_neg_div_lines()=>
+    if array.size(neg_div_lines) > 0    
+        for j = 0 to array.size(neg_div_lines) - 1 
+            line.delete(array.get(neg_div_lines, j))
+        array.clear(neg_div_lines)
+
+delete_old_pos_div_labels()=>
+    if array.size(pos_div_labels) > 0 
+        for j = 0 to array.size(pos_div_labels) - 1 
+            label.delete(array.get(pos_div_labels, j))
+        array.clear(pos_div_labels)
+
+delete_old_neg_div_labels()=>
+    if array.size(neg_div_labels) > 0    
+        for j = 0 to array.size(neg_div_labels) - 1 
+            label.delete(array.get(neg_div_labels, j))
+        array.clear(neg_div_labels)
+
+// delete last creted lines and labels until we met new PH/PV 
+delete_last_pos_div_lines_label(n)=>
+    if n > 0 and array.size(pos_div_lines) >= n    
+        asz = array.size(pos_div_lines)
+        for j = 1 to n
+            line.delete(array.get(pos_div_lines, asz - j))
+            array.pop(pos_div_lines)
+        if array.size(pos_div_labels) > 0  
+            label.delete(array.get(pos_div_labels, array.size(pos_div_labels) - 1))
+            array.pop(pos_div_labels)
+        if array.size(add_after_pos_cnt) > 0
+            pop_pos_ml_datas()
+
+delete_last_neg_div_lines_label(n)=>
+    if n > 0 and array.size(neg_div_lines) >= n    
+        asz = array.size(neg_div_lines)
+        for j = 1 to n
+            line.delete(array.get(neg_div_lines, asz - j))
+            array.pop(neg_div_lines)
+        if array.size(neg_div_labels) > 0  
+            label.delete(array.get(neg_div_labels, array.size(neg_div_labels) - 1))
+            array.pop(neg_div_labels)
+        if array.size(add_after_neg_cnt) > 0
+            pop_neg_ml_datas()
+            
+// variables for Alerts
+pos_reg_div_detected = false
+neg_reg_div_detected = false
+pos_hid_div_detected = false
+neg_hid_div_detected = false
+
+// to remove lines/labels until we met new // PH/PL
+var last_pos_div_lines = 0
+var last_neg_div_lines = 0
+var last_pos_ml_lines = 0
+var last_neg_ml_lines = 0
+var remove_last_pos_divs = false 
+var remove_last_neg_divs = false
+var remove_last_pos_ml = false 
+var remove_last_neg_ml = false
+if pl
+    remove_last_pos_divs := false
+    remove_last_pos_ml := false
+    last_pos_div_lines := 0
+    last_pos_ml_lines := 0
+if ph
+    remove_last_neg_divs := false
+    remove_last_neg_ml := false
+    last_neg_div_lines := 0
+    last_neg_ml_lines := 0
+
+// draw divergences lines and labels
+divergence_text_top = ""
+divergence_text_bottom = ""
+distances = array.new_int(0)
+dnumdiv_top = 0
+dnumdiv_bottom = 0
+top_label_col = color.white
+bottom_label_col = color.white
+old_pos_divs_can_be_removed = true
+old_neg_divs_can_be_removed = true
+startpoint = dontconfirm ? 0 : 1 // used for don't confirm option
+
+
+range2(_src, _a, _b) =>
+    _arr = array.new_float(0)
+    for i = _a to _b - 1
+        array.push(_arr, _src[i])
+    _arr
+
+divMasking = ""
+remove_flag = false
+for x = 0 to 10
+    div_type = -1
+    for y = 0 to 3
+        if array.get(all_divergences, x * 4 + y) > 0 // any divergence?
+            divMasking := divMasking + "1"
+            div_type := y
+            if (y % 2) == 1 
+                dnumdiv_top := dnumdiv_top + 1
+                top_label_col := array.get(div_colors, y)
+            if (y % 2) == 0
+                dnumdiv_bottom := dnumdiv_bottom + 1
+                bottom_label_col := array.get(div_colors, y)
+            if not array.includes(distances, array.get(all_divergences, x * 4 + y))  // line not exist ?
+                array.push(distances, array.get(all_divergences, x * 4 + y))
+                new_line = showlines ? line.new(x1 = bar_index - array.get(all_divergences, x * 4 + y), 
+                          y1 = (source == "Close" ? close[array.get(all_divergences, x * 4 + y)] : 
+                                           (y % 2) == 0 ? low[array.get(all_divergences, x * 4 + y)] : 
+                                                          high[array.get(all_divergences, x * 4 + y)]),
+                          x2 = bar_index - startpoint,
+                          y2 = (source == "Close" ? close[startpoint] : 
+                                           (y % 2) == 0 ? low[startpoint] : 
+                                                          high[startpoint]),
+                          color = array.get(div_colors, y),
+                          style = y < 2 ? reg_div_l_style : hid_div_l_style,
+                          width = y < 2 ? reg_div_l_width : hid_div_l_width
+                          )
+                          : na
+                if (y % 2) == 0
+                    if old_pos_divs_can_be_removed
+                        old_pos_divs_can_be_removed := false
+                        if not showlast and remove_last_pos_divs
+                            remove_flag := true
+                            delete_last_pos_div_lines_label(last_pos_div_lines)
+                            last_pos_div_lines := 0
+                        if showlast
+                            delete_old_pos_div_lines()
+                    array.push(pos_div_lines, new_line)
+                    last_pos_div_lines := last_pos_div_lines + 1
+                    remove_last_pos_divs := true
+                    
+                if (y % 2) == 1
+                    if old_neg_divs_can_be_removed
+                        old_neg_divs_can_be_removed := false
+                        if not showlast and remove_last_neg_divs
+                            remove_flag := true
+                            delete_last_neg_div_lines_label(last_neg_div_lines)
+                            last_neg_div_lines := 0
+                        if showlast
+                            delete_old_neg_div_lines()
+                    array.push(neg_div_lines, new_line)
+                    last_neg_div_lines := last_neg_div_lines + 1
+                    remove_last_neg_divs := true
+                    
+            // set variables for alerts
+            if y == 0
+                pos_reg_div_detected := true
+            if y == 1
+                neg_reg_div_detected := true
+            if y == 2
+                pos_hid_div_detected := true
+            if y == 3
+                neg_hid_div_detected := true
+        else 
+            divMasking := divMasking + "0"
+            na
+    // get text for labels
+    if div_type >= 0
+        divergence_text_top    := divergence_text_top    + ((div_type % 2) == 1 ? (showindis != "Don't Show" ? array.get(indicators_name, x) + "\n" : "") : "")
+        divergence_text_bottom := divergence_text_bottom + ((div_type % 2) == 0 ? (showindis != "Don't Show" ? array.get(indicators_name, x) + "\n" : "") : "")
+
+// plot(remove_last_neg_divs?45000:40000, "변수테스트")
+// plot(remove_flag?close+1000:close-1000, "remove테스트", color=color.red)
+
+// draw labels
+if showindis != "Don't Show" or shownum
+    if shownum and dnumdiv_top > 0
+        divergence_text_top := divergence_text_top + tostring(dnumdiv_top)
+    if shownum and dnumdiv_bottom > 0
+        divergence_text_bottom := divergence_text_bottom + tostring(dnumdiv_bottom)
+    if divergence_text_top != ""
+        if showlast
+            delete_old_neg_div_labels()
+        push_neg_ml_datas(divMasking)   //다이브 마스킹과 어레이 추가
+        array.push(neg_div_labels, 
+                      label.new( x = bar_index, 
+                                 y = max(high, high[1]), 
+                                 text = divergence_text_top,
+                                 color = top_label_col,
+                                 textcolor = neg_div_text_col,
+                                 style = label.style_label_down
+                                 ))
+                                 
+    if divergence_text_bottom != ""
+        if showlast
+            delete_old_pos_div_labels()
+        push_pos_ml_datas(divMasking)
+        array.push(pos_div_labels, 
+                      label.new( x = bar_index, 
+                                 y = min(low, low[1]), 
+                                 text = divergence_text_bottom,
+                                 color = bottom_label_col, 
+                                 textcolor = pos_div_text_col,
+                                 style = label.style_label_up
+                                 ))
+                                 
+    
+alertcondition(pos_reg_div_detected, title='Positive Regular Divergence Detected', message='Positive Regular Divergence Detected')
+alertcondition(neg_reg_div_detected, title='Negative Regular Divergence Detected', message='Negative Regular Divergence Detected')
+alertcondition(pos_hid_div_detected, title='Positive Hidden Divergence Detected', message='Positive Hidden Divergence Detected')
+alertcondition(neg_hid_div_detected, title='Negative Hidden Divergence Detected', message='Negative Hidden Divergence Detected')
+alertcondition(pos_reg_div_detected or pos_hid_div_detected, title='Positive Divergence Detected', message='Positive Divergence Detected')
+alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Divergence Detected', message='Negative Divergence Detected')
+
+
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © yechankun, redniche
+
+///////////////////////////////////// MLP구현부 //////////////////////////////
+    
+f_matrix_get_nr_of_rows(_m) =>
+    _rows = int(array.get(_m, 0))
+    _rows
+
+f_matrix_get_nr_of_columns(_m) =>
+    _columns = int(array.get(_m, 1))
+    _columns
+    
+f_matrix_get_size(_m) =>
+    _rows    = int(array.get(_m, 0))
+    _columns = int(array.get(_m, 1))
+    [_rows, _columns]
+
+//가상 2차원 매트릭스 생성 함수 - 트뷰엔 실제론 1차원 배열만 있음.
+f_matrix_init(_nr_of_rows, _nr_of_columns, _fill) =>
+    _size = int(_nr_of_rows * _nr_of_columns)
+    _m    = array.new_float(_size + 2, _fill)
+    array.set(_m, 0, _nr_of_rows), array.set(_m, 1, _nr_of_columns)
+    _m
+//가상 2차원 매트릭스 행과 열로 값 세팅
+f_matrix_set(_m, _row_index, _column_index, _val) =>
+    _columns = f_matrix_get_nr_of_columns(_m)
+    array.set(_m, 2 + int((_row_index * _columns) + _column_index), _val)
+//행과 열로 값 가져오기
+f_matrix_get(_m, _row_index, _column_index) =>
+    _columns = f_matrix_get_nr_of_columns(_m)
+    _val     = array.get(_m, 2 + int((_row_index * _columns) + _column_index))
+    _val
+    
+f_matrix_print(_m) =>
+    _text = "(" + tostring(array.get(_m, 0)) + "x" + tostring(array.get(_m, 1)) + ")"
+    _text := _text + "\n" + "\n"+"["
+    for i = 2 to array.size(_m) - 1
+        _text := _text + (i == 2 ? "" : ((i - 2) % array.get(_m, 1)) == 0 ? "]" + "\n" + "[" : " ") + tostring(array.get(_m, i))
+    _text := _text + "]"
+    
+
+    
+
+
+//1차원 배열만 가능함. 시그모이드 활성화 함수 => Leaky RelU
+Activation_function(arr) =>
+    // result = array.new_float(array.size(arr), 0)
+    // for i = 0 to array.size(result) - 1
+    //     array.set(result, i ,1.0 / (1.0 + exp(-array.get(arr, i))))
+    // result
+    result = array.new_float(array.size(arr), 0)
+    for i = 0 to array.size(result) - 1
+        x = array.get(arr, i)
+        array.set(result, i, max(0.01 * x, x))
+    result
+
+
+NextGaussian(mean, sd) =>
+    u = 0.0
+    v = 0.0
+    for i=0 to 1000
+        if(not u == 0)
+            break
+        u := random(seed = 213214215) //Converting [0,1) to (0,1)
+    
+    for i=0 to 1000
+        if(not v == 0)
+            break
+        v := random(seed = 909090215)
+    result = mean + sqrt( -2.0 * log( u ) ) * cos( 2.0 * math.pi * v ) * sd
+    result
+
+//가중치 행렬 세팅
+var wih = f_matrix_init(inode, hnode, 0.0)
+var who = f_matrix_init(hnode, onode, 0.0)
+
+// s = f_matrix_get_nr_of_columns(wih)
+// label.new(bar_index, close-100, tostring(s))
+var flag = true
+if(flag)
+    flag := false
+    for i=0 to inode-1
+        for h=0 to hnode-1
+            // f_matrix_set(wih, i, h, NextGaussian(0.0,  sqrt(2.0/hnode)))  // relu용 , he
+            f_matrix_set(wih, i, h, NextGaussian(0.0, pow(hnode, -0.5))) // 가중치 초기화 sigmoid용 , xavier
+            
+            
+    for h=0 to hnode-1
+        for o=0 to onode-1
+            // f_matrix_set(who, h, o, NextGaussian(0.0, sqrt(2.0/onode)))   // relu용 , he
+            f_matrix_set(who, h, o, NextGaussian(0.0, pow(onode, -0.5))) // 가중치 초기화 sigmoid용 , xavier
+            
+//학습 함수
+Train(input_list, target_list) =>
+    //// 정전파
+    // label.new(bar_index, close-50, tostring(hidden_outputs))
+    hidden_inputs =  array.new_float(hnode, 0)
+    for i=0 to inode-1
+        for h=0 to hnode-1
+            array.set(hidden_inputs, h, array.get(hidden_inputs, h) + f_matrix_get(wih, i, h) * array.get(input_list, i))
+    // label.new(bar_index, close-50, tostring(f_matrix_get(wih, 0, 0)))
+    hidden_outputs = Activation_function(hidden_inputs)
+    
+    final_inputs =  array.new_float(onode, 0)
+    for h=0 to hnode-1
+        for o=0 to onode-1
+            array.set(final_inputs, o, array.get(final_inputs, o) + f_matrix_get(who, h, o) * array.get(hidden_outputs, h))
+    final_outputs = Activation_function(final_inputs)
+    
+    
+    ////역전파
+    output_errors = target_list
+    for o=0 to onode-1
+        array.set(output_errors, o, array.get(output_errors, o) - array.get(final_outputs, o))
+    // label.new(bar_index, close, tostring(target_list))
+    // output_errors := Activation_derivative(output_errors)
+    
+    hidden_errors = array.new_float(hnode, 0)
+    for o=0 to onode-1
+        for h=0 to hnode-1
+            array.set(hidden_errors, h, array.get(hidden_errors, h) + f_matrix_get(who, h, o) * array.get(output_errors, o))
+    // hidden_errors := Activation_derivative(hidden_errors)
+    
+    //가중치 업데이트
+    for h=0 to hnode-1
+        for o=0 to onode-1
+            f_matrix_set(who, h, o, f_matrix_get(who, h, o) + lrate * array.get(output_errors, o) * array.get(final_outputs,o) * (1 - array.get(final_outputs,o)) * array.get(hidden_outputs, h))
+    
+    for i=0 to inode-1
+        for h=0 to hnode-1
+            f_matrix_set(wih, i, h, f_matrix_get(wih, i, h) + lrate * array.get(hidden_errors, h) * array.get(hidden_outputs,h) * (1 - array.get(hidden_outputs,h)) * array.get(input_list, i))
+    final_outputs
+
+//질의 함수
+Query(input_list) =>
+    //질의는 정전파만 수행
+    hidden_inputs =  array.new_float(hnode, 0)
+    for i=0 to inode-1
+        for h=0 to hnode-1
+            array.set(hidden_inputs, h, array.get(hidden_inputs, h) + f_matrix_get(wih, i, h) * array.get(input_list, i))
+    hidden_outputs = Activation_function(hidden_inputs)
+    final_inputs =  array.new_float(onode, 0)
+    for h=0 to hnode-1
+        for o=0 to onode-1
+            array.set(final_inputs, o, array.get(final_inputs, o) + f_matrix_get(who, h, o) * array.get(hidden_outputs, h))
+    final_outputs = Activation_function(final_inputs)
+    final_outputs
+
+
+
+//학습을 위한 입력 리스트 타겟 리스트 설정
+var isDivPast = false
+
+
+if(isDivPast[1])
+    isDivPast := false
+for i=0 to 43
+    if array.get(all_divergences, i) > 0   // 과거 다이버전스 발생을 저장하려면 이런 수를 써야함. 배열의 과거 접근은 지원을 안함.
+        isDivPast := true
+        divMasking := divMasking + "1"
+    else
+        divMasking := divMasking + "0"
+
+
+var pos_ml_labels = array.new_label(0)
+var neg_ml_labels = array.new_label(0) 
+
+up_pos_cnt()    //다이버전스 등록된지 얼마나 됐는지 카운팅
+up_neg_cnt()
+
+if(isMLP)
+    [div_mask, past_close_diff_per, past_high_diff_per, past_low_diff_per, past_mid_diff_per] = over_cnt_pos_check(std_candle < signal_check ? signal_check : std_candle)    // 등록된지 10이상이면 std_candle 캔들 기간 뒤에 뽑아짐. div_mask가 ""이거나 나머지가 false면 등록된지 std_candle캔들이 안지난것
+    [div_mask2, past_close_diff_per2, past_high_diff_per2, past_low_diff_per2, past_mid_diff_per2] = over_cnt_neg_check(std_candle < signal_check ? signal_check : std_candle)
+    //학습 결과값과 비교할 위치 기준임.
+    train_std_close = std_candle < signal_check ? signal_check-std_candle : 0
+    if(div_mask != "")   // 상다 학습 시키기
+        inputs_list = array.new_float(inode, 0.01)
+        pastDivCheck = str.split(div_mask, "")        
+        for i=0 to inode - (inode - 44) - 1
+            if array.get(pastDivCheck, i) == "1"
+                array.set(inputs_list, i, 0.99)
+                // label.new(bar_index, close, "1") //디버깅용 
+        // train_std_close = std_candle < 7 ? 7-std_candle : 0 
+        array.set(inputs_list, inode - 1, past_close_diff_per)
+        array.set(inputs_list, inode - 2, past_high_diff_per)
+        array.set(inputs_list, inode - 3, past_low_diff_per)
+        array.set(inputs_list, inode - 4, past_mid_diff_per)
+        // label.new(bar_index, high, tostring(inputs_list))
+        
+        targets_list = array.new_float(onode, 0.01) //-10 -8 -6 -4 -2 0 2 4 6 8 10 
+        //현재가격/과거가격   
+        target_idx = int(get_target_datas())
+        array.set(targets_list, target_idx, 0.99)
+        
+        // label.new(bar_index, close, f_matrix_print(targets_list))
+        if(isShowTrainLog) 
+            label.new(bar_index, high, "학습했웡")
+            line.new(x1 = bar_index[train_std_close + std_candle] ,y1= close[train_std_close + std_candle], x2 = bar_index, y2 = close, width=2)
+        output = array.new_float(0)
+        for i = 1 to trainCnt
+            output := Train(inputs_list, targets_list)
+    
+    if(div_mask2 != "")   //하다 학습 시키기
+        inputs_list = array.new_float(inode, 0.01)
+        pastDivCheck = str.split(div_mask2, "")        
+        for i=0 to inode - (inode - 44) - 1
+            if array.get(pastDivCheck, i) == "1"
+                array.set(inputs_list, i, 0.99)
+                // label.new(bar_index, close, "1") //디버깅용 
+        // train_std_close = std_candle < 7 ? 7-std_candle : 0 
+        array.set(inputs_list, inode - 1, past_close_diff_per2)
+        array.set(inputs_list, inode - 2, past_high_diff_per2)
+        array.set(inputs_list, inode - 3, past_low_diff_per2)
+        array.set(inputs_list, inode - 4, past_mid_diff_per2)
+        
+        targets_list = array.new_float(onode, 0.01) //-10 -8 -6 -4 -2 0 2 4 6 8 10 
+        //현재가격/과거가격   =
+        array.set(targets_list, int(get_target_datas()), 0.99)
+        // label.new(bar_index, close*0.9, tostring(inputs_list))
+        if(isShowTrainLog) 
+            label.new(bar_index, high, "학습했웡")
+            line.new(x1 = bar_index[train_std_close + std_candle] ,y1= close[train_std_close + std_candle], x2 = bar_index, y2 = close, width=2)
+
+        for i = 1 to trainCnt
+            Train(inputs_list, targets_list)
+    
+    
+    if(isDivPast)   //[]가 아니면 현재임.
+        inputs_list = array.new_float(inode, 0.01)
+        pastDivCheck = str.split(divMasking, "")        
+        for i=0 to inode - (inode - 44) - 1
+            if array.get(pastDivCheck, i) == "1"
+                array.set(inputs_list, i, 0.99)
+                
+        [input_price_per, hl_high_price_per, hl_low_price_per, hl_mid_price_per] = get_input_node_datas()
+        array.set(inputs_list, inode - 1, input_price_per)
+        array.set(inputs_list, inode - 2, hl_high_price_per)
+        array.set(inputs_list, inode - 3, hl_low_price_per)
+        array.set(inputs_list, inode - 4, hl_mid_price_per)
+        ///////
+        
+        output = Query(inputs_list)
+        
+        
+        max = array.max(output)
+        max_index = array.indexof(output, max)
+        output_max = -(diff_val/2.0*11.0) + max_index*diff_val
+        if(output_max == -(diff_val/2*11.0) - 1.0)
+            output_max := na
+        else
+            array.remove(output, max_index)
+            array.insert(output, max_index, 0.0)
+            na
+        
+        s_max = array.max(output)
+        s_output_max = -(diff_val/2.0*11.0) + array.indexof(output, s_max)*diff_val
+        if(s_output_max == -(diff_val/2.0*11.0) - 1.0)
+            s_output_max := na
+            
+        // label.new(bar_index, close, f_matrix_print(output))
+        // label.new(bar_index, close, "약"+tostring(qu)+"%__"+ tostring(floor(max*100))+"%")
+    
+        ml_text_top = ""
+        ml_text_bot = ""
+        old_pos_ml_can_be_removed = true
+        old_neg_ml_can_be_removed = true
+        distances_ml = array.new_int(0)
+        
+        for x = 0 to 10
+            div_type = -1
+            for y = 0 to 3
+                if array.get(all_divergences, x * 4 + y) > 0 // any divergence?
+                    div_type := y
+                    if (y % 2) == 1 
+                        // dnumdiv_top := dnumdiv_top + 1
+                        top_label_col := array.get(div_colors, y)
+                    if (y % 2) == 0
+                        // dnumdiv_bottom := dnumdiv_bottom + 1
+                        bottom_label_col := array.get(div_colors, y)
+                    if not array.includes(distances_ml, array.get(all_divergences, x * 4 + y))  // line not exist ?
+                        array.push(distances_ml, array.get(all_divergences, x * 4 + y))
+                        if (y % 2) == 0
+                            if old_pos_ml_can_be_removed
+                                old_pos_ml_can_be_removed := false
+                                if not showlast and remove_last_pos_ml
+                                    if array.size(pos_ml_labels) > 0  and last_pos_ml_lines > 0
+                                        label.delete(array.pop(pos_ml_labels))//여기서 라벨 
+                                    last_pos_ml_lines := 0
+                            last_pos_ml_lines := last_pos_ml_lines + 1
+                            remove_last_pos_ml := true
+                            
+                        if (y % 2) == 1
+                            if old_neg_ml_can_be_removed
+                                old_neg_ml_can_be_removed := false
+                                if not showlast and remove_last_neg_ml
+                                    if array.size(neg_ml_labels) > 0 and last_neg_ml_lines > 0
+                                        label.delete(array.pop(neg_ml_labels))
+                                    last_neg_ml_lines := 0
+                            last_neg_ml_lines := last_neg_ml_lines + 1
+                            remove_last_neg_ml := true
+                            
+            // get text for labels
+            if div_type >= 0
+                ml_text_top    := (div_type % 2) == 1 ? "#1: 약 " + (output_max > 0 ? "+": "") + tostring(round(output_max,2))+"% 이내\n예측강도 " + tostring(floor(max*100))+"%" + (isSecMaxView? "\n#2: 약 " + (s_output_max > 0 ? "+": "") + tostring(round(s_output_max,2))+"% 이내\n예측강도 " + tostring(floor(s_max*100))+"%" : ""): ""
+                ml_text_bot    := (div_type % 2) == 0 ? "#1: 약 " + (output_max > 0 ? "+": "") + tostring(round(output_max,2))+"% 이내\n예측강도 " + tostring(floor(max*100))+"%" + (isSecMaxView? "\n#2: 약 " + (s_output_max > 0 ? "+": "") + tostring(round(s_output_max,2))+"% 이내\n예측강도 " + tostring(floor(s_max*100))+"%" : ""): ""
+                
+        if showindis != "Don't Show" or shownum
+            if ml_text_top != ""
+                if showlast
+                    if array.size(neg_ml_labels) > 0    
+                        for j = 0 to array.size(neg_ml_labels) - 1 
+                            label.delete(array.get(neg_ml_labels, j))
+                        array.clear(neg_ml_labels) // ml 라벨 지우는걸로 바꿔야함.
+                array.push(neg_ml_labels, 
+                              label.new( x = bar_index, 
+                                         y = min(low, low[1]), 
+                                         text = ml_text_top,
+                                         color = top_label_col,
+                                         textcolor = neg_div_text_col,
+                                         style = label.style_label_up
+                                         ))
+            if ml_text_bot != ""
+                if showlast
+                    if array.size(pos_ml_labels) > 0    
+                        for j = 0 to array.size(pos_ml_labels) - 1 
+                            label.delete(array.get(pos_ml_labels, j))
+                        array.clear(pos_ml_labels) // ml 라벨 지우는걸로 바꿔야함.
+                array.push(pos_ml_labels, 
+                              label.new( x = bar_index, 
+                                         y = max(high, high[1]), 
+                                         text = ml_text_bot,
+                                         color = bottom_label_col,
+                                         textcolor = pos_div_text_col,
+                                         style = label.style_label_down
+                                         ))
